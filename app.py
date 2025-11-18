@@ -13,7 +13,7 @@ from email.mime.multipart import MIMEMultipart
 st.set_page_config(page_title="AI Экзаменатор", page_icon="🎓", layout="centered")
 
 # --- НАСТРОЙКИ API (Можно оставить здесь или вынести в secrets) ---
-API_KEY = "sk-..."  # <--- ВАШ КЛЮЧ OPENAI
+API_KEY = "sk-eed4YX4hls3D40w1QKzADGHzlodsSsVa"  # <--- ВАШ КЛЮЧ OPENAI
 BASE_URL = "https://openai.api.proxyapi.ru/v1"
 MODEL_NAME = "gpt-4o-mini"
 
@@ -273,3 +273,4 @@ elif st.session_state.step == "finished":
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.rerun()
+
