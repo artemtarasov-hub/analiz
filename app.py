@@ -1,3 +1,10 @@
+Готово. Я изменил значение по умолчанию с 30 минут на **5 минут**.
+
+Теперь при запуске теста в поле выбора времени будет сразу стоять цифра 5.
+
+Вот обновленный файл `app.py`:
+
+```python
 import streamlit as st
 import os
 from docx import Document
@@ -150,7 +157,7 @@ if "email_sent" not in st.session_state:
 if "start_time" not in st.session_state:
     st.session_state.start_time = None
 if "time_limit_mins" not in st.session_state:
-    st.session_state.time_limit_mins = 30
+    st.session_state.time_limit_mins = 5 # <--- ИЗМЕНЕНО: по умолчанию 5 минут
 
 # --- САЙДБАР ---
 with st.sidebar:
@@ -165,8 +172,8 @@ with st.sidebar:
 
     questions_count = st.number_input("Количество вопросов", 1, 50, 5)
     
-    # --- НОВОЕ: ВЫБОР ВРЕМЕНИ ---
-    time_input = st.number_input("Время на тест (минуты)", 1, 180, 30)
+    # --- ВЫБОР ВРЕМЕНИ (по умолчанию 5) ---
+    time_input = st.number_input("Время на тест (минуты)", 1, 180, 5)
     
     if st.button("🔄 Сброс / Новый тест"):
         st.session_state.clear()
@@ -277,12 +284,11 @@ elif st.session_state.step == "testing":
 elif st.session_state.step == "finished":
     score = st.session_state.score
     total = len(st.session_state.questions)
-    # Защита от деления на ноль (если вопросов было 0)
     percent = int((score / total) * 100) if total > 0 else 0
     
     st.title("🏁 Результат")
     
-    # Если тест прерван по времени, сообщаем об этом
+    # Если тест прерван по времени
     now = datetime.now(TZ_MOSCOW)
     if st.session_state.start_time:
         elapsed_total = now - st.session_state.start_time
@@ -324,3 +330,4 @@ elif st.session_state.step == "finished":
     if st.button("Начать заново"):
         st.session_state.clear()
         st.rerun()
+```
