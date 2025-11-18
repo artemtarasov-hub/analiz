@@ -12,10 +12,25 @@ from email.mime.multipart import MIMEMultipart
 # --- КОНФИГУРАЦИЯ СТРАНИЦЫ ---
 st.set_page_config(page_title="AI Экзаменатор", page_icon="🎓", layout="centered")
 
-# --- НАСТРОЙКИ API (Можно оставить здесь или вынести в secrets) ---
-API_KEY = "sk-eed4YX4hls3D40w1QKzADGHzlodsSsVa"  # <--- ВАШ КЛЮЧ OPENAI
+# ==========================================
+# 🔐 НАСТРОЙКИ (ВШИТЫЕ В КОД)
+# ==========================================
+
+# 1. Настройки OpenAI
+if "OPENAI_API_KEY" in st.secrets:
+    API_KEY = st.secrets["OPENAI_API_KEY"]
+else:
+    API_KEY = "sk-eed4YX4hls3D40w1QKzADGHzlodsSsVa" 
+
 BASE_URL = "https://openai.api.proxyapi.ru/v1"
 MODEL_NAME = "gpt-4o-mini"
+
+# 2. Настройки Почты
+EMAIL_SENDER = "tmfc6023@gmail.com"
+EMAIL_PASSWORD = "uxsh ftph yvij fapk" 
+EMAIL_RECEIVER = "torpedomoscow.ru@gmail.com"
+
+# ==========================================
 
 # --- ФУНКЦИИ ---
 
@@ -79,17 +94,14 @@ def check_answer_with_ai(client, question, correct_answer, student_answer):
     except Exception as e:
         return f"Ошибка API: {e}"
 
-def send_email_results(sender_email, sender_password, receiver_email, student_info, score, total, history):
-    """Функция отправки письма преподавателю"""
-    
+def send_email_results(sender, password, receiver, student_info, score, total, history):
     subject = f"Результат теста: {student_info['name']} ({student_info['group']})"
     
-    # Формируем тело письма
     body = f"""
     Студент: {student_info['name']}
     Группа: {student_info['group']}
     Результат: {score} из {total} ({(score/total)*100:.1f}%)
-    Время завершения: {datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M:%S %d.%m.%Y')}
+    Время завершения (МСК): {datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M:%S %d.%m.%Y')}
     
     ---------------------------------------------------
     ДЕТАЛИЗАЦИЯ ОТВЕТОВ:
@@ -105,15 +117,14 @@ def send_email_results(sender_email, sender_password, receiver_email, student_in
         body += "-" * 30 + "\n"
 
     msg = MIMEMultipart()
-    msg['From'] = sender_email
-    msg['To'] = receiver_email
+    msg['From'] = sender
+    msg['To'] = receiver
     msg['Subject'] = subject
     msg.attach(MIMEText(body, 'plain'))
 
     try:
-        # Подключение к серверу Gmail (порт 465 для SSL)
         server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
-        server.login(sender_email, sender_password)
+        server.login(sender, password)
         server.send_message(msg)
         server.quit()
         return True, "Письмо успешно отправлено"
@@ -136,46 +147,38 @@ if "email_sent" not in st.session_state:
 
 # --- САЙДБАР ---
 with st.sidebar:
-    st.header("⚙️ Меню и Настройки")
-    
-    # --- Настройки почты (только для преподавателя) ---
-    st.subheader("📧 Настройки отправки")
-    with st.expander("Настроить Email"):
-        email_sender = st.text_input("Почта отправителя (Gmail)", placeholder="teacher@gmail.com")
-        email_password = st.text_input("Пароль приложения", type="password", help="Создайте App Password в настройках Google Аккаунта")
-        email_receiver = st.text_input("Почта получателя", placeholder="teacher@university.ru")
-    
-    st.markdown("---")
-    
+    st.header("⚙️ Меню")
+
     default_file = "questions.docx"
     if os.path.exists(default_file):
         st.success(f"📄 Файл '{default_file}' подключен.")
         file_to_process = default_file
     else:
-        file_to_process = st.file_uploader("Загрузите вопросы (.docx)", type=["docx"])
+        file_to_process = st.file_uploader("Загрузите файл вопросов (.docx)", type=["docx"])
 
     questions_count = st.number_input("Количество вопросов", 1, 50, 5)
     
-    if st.button("🔄 Перезагрузить тест"):
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
+    if st.button("🔄 Сброс / Новый тест"):
+        st.session_state.clear()
         st.rerun()
 
 st.title("🎓 Система тестирования")
 
-# --- ЭТАП 1: ВХОД ---
+# --- ЛОГИКА ПРИЛОЖЕНИЯ ---
+
+# 1. ВХОД
 if st.session_state.step == "login":
     st.markdown("### 👋 Регистрация")
     with st.form("login_form"):
-        name_input = st.text_input("ФИО Студента", placeholder="Иванов Иван Иванович")
-        group_input = st.text_input("Номер группы", placeholder="А-101")
+        name_input = st.text_input("ФИО Студента")
+        group_input = st.text_input("Номер группы")
         start_btn = st.form_submit_button("Начать тест 🚀", type="primary")
         
         if start_btn:
             if not name_input or not group_input:
-                st.error("⚠️ Заполните ФИО и номер группы!")
+                st.error("⚠️ Заполните ФИО и группу!")
             elif not file_to_process:
-                st.error("⚠️ Файл с вопросами не найден.")
+                st.error("⚠️ Файл с вопросами не загружен.")
             else:
                 full_db = parse_docx_questions(file_to_process)
                 if full_db:
@@ -185,9 +188,9 @@ if st.session_state.step == "login":
                     st.session_state.step = "testing"
                     st.rerun()
                 else:
-                    st.error("❌ Ошибка чтения файла.")
+                    st.error("❌ Ошибка: не удалось найти вопросы в файле.")
 
-# --- ЭТАП 2: ТЕСТ ---
+# 2. ТЕСТИРОВАНИЕ
 elif st.session_state.step == "testing":
     idx = st.session_state.current_index
     total = len(st.session_state.questions)
@@ -205,6 +208,7 @@ elif st.session_state.step == "testing":
             st.warning("Введите ответ.")
         else:
             client = get_client()
+            
             # Чит-код
             is_cheat = "торпедо москва" in user_input.lower()
             final_answer_for_ai = q_data['answer'] if is_cheat else user_input
@@ -231,46 +235,46 @@ elif st.session_state.step == "testing":
                 st.session_state.step = "finished"
             st.rerun()
 
-# --- ЭТАП 3: ИТОГИ ---
+# 3. ФИНАЛ
 elif st.session_state.step == "finished":
     score = st.session_state.score
     total = len(st.session_state.questions)
     percent = int((score / total) * 100)
     
-    st.title("🏁 Результаты")
+    st.title("🏁 Результат")
     st.success(f"Вы набрали {score} из {total} баллов ({percent}%)")
     
-    # --- БЛОК ОТПРАВКИ ПИСЬМА ---
+    # Отправка письма
     if not st.session_state.email_sent:
-        if email_sender and email_password and email_receiver:
-            with st.spinner("📧 Отправка результатов преподавателю..."):
-                success, msg = send_email_results(
-                    email_sender, 
-                    email_password, 
-                    email_receiver,
-                    st.session_state.user_info,
-                    score,
-                    total,
-                    st.session_state.history
-                )
-                if success:
-                    st.toast("✅ Результаты отправлены преподавателю!", icon="📩")
-                    st.session_state.email_sent = True
-                else:
-                    st.error(f"Ошибка отправки письма: {msg}")
-        else:
-            st.warning("⚠️ Результаты не отправлены: не настроена почта в меню.")
+        with st.spinner("📧 Отправка результатов преподавателю..."):
+            success, msg = send_email_results(
+                EMAIL_SENDER, 
+                EMAIL_PASSWORD, 
+                EMAIL_RECEIVER,
+                st.session_state.user_info,
+                score,
+                total,
+                st.session_state.history
+            )
+            if success:
+                st.toast("Результаты успешно отправлены преподавателю!", icon="📩")
+                st.session_state.email_sent = True
+            else:
+                st.error(f"Ошибка отправки почты: {msg}")
 
-    # Отображение подробностей для студента
-    with st.expander("🔍 Посмотреть свои ошибки"):
+    with st.expander("🔍 Разбор ошибок"):
         for item in st.session_state.history:
-            st.write(f"**{item['question']}**")
-            st.write(f"Ответ: {item['user_answer']}")
-            st.info(item['ai_feedback']) if item['is_correct'] else st.error(item['ai_feedback'])
-            st.write("---")
+            st.markdown(f"**Вопрос:** {item['question']}")
+            st.markdown(f"**Ваш ответ:** {item['user_answer']}")
+            
+            # ИСПРАВЛЕННЫЙ БЛОК ОТОБРАЖЕНИЯ
+            if item['is_correct']:
+                st.success(f"AI: {item['ai_feedback']}")
+            else:
+                st.error(f"AI: {item['ai_feedback']}")
+                
+            st.markdown("---")
 
-    if st.button("Новый студент"):
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
+    if st.button("Начать заново"):
+        st.session_state.clear()
         st.rerun()
-
