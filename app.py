@@ -1,10 +1,3 @@
-Готово. Я изменил значение по умолчанию с 30 минут на **5 минут**.
-
-Теперь при запуске теста в поле выбора времени будет сразу стоять цифра 5.
-
-Вот обновленный файл `app.py`:
-
-```python
 import streamlit as st
 import os
 from docx import Document
@@ -330,4 +323,3 @@ elif st.session_state.step == "finished":
     if st.button("Начать заново"):
         st.session_state.clear()
         st.rerun()
-```
