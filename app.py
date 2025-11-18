@@ -9,7 +9,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import time
-import pandas as pd  # <--- НОВАЯ БИБЛИОТЕКА
+import pandas as pd
 
 # --- КОНФИГУРАЦИЯ СТРАНИЦЫ ---
 st.set_page_config(page_title="AI Экзаменатор", page_icon="🎓", layout="centered")
@@ -33,7 +33,7 @@ EMAIL_PASSWORD = "uxsh ftph yvij fapk"
 EMAIL_RECEIVER = "torpedomoscow.ru@gmail.com"
 
 # 3. Администрирование
-ADMIN_PASSWORD = "admin"  # Пароль для просмотра таблицы результатов
+ADMIN_PASSWORD = "admin"  # Пароль для просмотра таблицы
 RESULTS_FILE = "exam_results.csv" # Имя файла с результатами
 
 # Часовой пояс
@@ -157,7 +157,7 @@ def save_result_to_csv(student_info, score, total):
     
     df_new = pd.DataFrame(new_data)
     
-    # Если файл есть, дописываем (без заголовков), если нет - создаем
+    # Используем utf-8-sig для корректной работы с Excel и русским языком
     if os.path.exists(RESULTS_FILE):
         df_new.to_csv(RESULTS_FILE, mode='a', header=False, index=False, encoding='utf-8-sig')
     else:
@@ -216,33 +216,48 @@ with st.sidebar:
         
     st.markdown("---")
     
-    # --- ПАНЕЛЬ ПРЕПОДАВАТЕЛЯ ---
+    # --- ПАНЕЛЬ ПРЕПОДАВАТЕЛЯ (ИСПРАВЛЕНО ЧТЕНИЕ) ---
     with st.expander("👨‍🏫 Панель преподавателя"):
         password = st.text_input("Введите пароль", type="password")
         if password == ADMIN_PASSWORD:
             st.success("Доступ разрешен")
             if os.path.exists(RESULTS_FILE):
-                df = pd.read_csv(RESULTS_FILE)
-                st.dataframe(df)
-                
-                # Кнопка скачивания
-                csv_data = df.to_csv(index=False).encode('utf-8-sig')
-                st.download_button(
-                    label="📥 Скачать таблицу (.csv)",
-                    data=csv_data,
-                    file_name="results_group.csv",
-                    mime="text/csv",
-                )
+                # Попытка прочитать файл с разными кодировками, чтобы избежать ошибки
+                try:
+                    df = pd.read_csv(RESULTS_FILE, encoding='utf-8-sig')
+                except UnicodeDecodeError:
+                    # Если старый файл был в другой кодировке
+                    try:
+                        df = pd.read_csv(RESULTS_FILE, encoding='cp1251')
+                    except:
+                        st.error("Файл результатов поврежден. Рекомендуется очистить таблицу.")
+                        df = pd.DataFrame()
+
+                if not df.empty:
+                    st.dataframe(df)
+                    
+                    # Кнопка скачивания
+                    csv_data = df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                    st.download_button(
+                        label="📥 Скачать таблицу (.csv)",
+                        data=csv_data,
+                        file_name="results_group.csv",
+                        mime="text/csv",
+                    )
                 
                 if st.button("🗑 Очистить таблицу"):
-                    os.remove(RESULTS_FILE)
-                    st.rerun()
+                    try:
+                        os.remove(RESULTS_FILE)
+                        st.success("Таблица очищена!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Ошибка при удалении: {e}")
             else:
                 st.info("Пока нет сохраненных результатов.")
         elif password:
             st.error("Неверный пароль")
 
-    # Таймер в сайдбаре
+    # Таймер
     show_live_timer()
 
 st.title("🎓 Система тестирования")
@@ -347,12 +362,11 @@ elif st.session_state.step == "finished":
     
     st.success(f"Вы набрали {score} из {total} баллов ({percent}%)")
     
-    # Если письмо еще не отправлено (первый рендер финала)
     if not st.session_state.email_sent:
-        # 1. Сохраняем в общую таблицу
+        # 1. Сохраняем в CSV
         save_result_to_csv(st.session_state.user_info, score, total)
         
-        # 2. Отправляем письмо
+        # 2. Отправляем на почту
         with st.spinner("📧 Отправка результатов преподавателю..."):
             success, msg = send_email_results(
                 EMAIL_SENDER, 
