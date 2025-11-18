@@ -4,6 +4,7 @@ from docx import Document
 from openai import OpenAI
 import random
 from datetime import datetime
+import pytz  # Добавлена библиотека для работы с часовыми поясами
 
 # --- КОНФИГУРАЦИЯ СТРАНИЦЫ ---
 st.set_page_config(page_title="AI Экзаменатор", page_icon="🎓", layout="centered")
@@ -190,7 +191,9 @@ elif st.session_state.step == "testing":
             if st.session_state.current_index + 1 < total:
                 st.session_state.current_index += 1
             else:
-                st.session_state.end_time = datetime.now().strftime("%H:%M:%S %d.%m.%Y")
+                # --- ИЗМЕНЕНИЕ: Установка Московского времени ---
+                moscow_tz = pytz.timezone('Europe/Moscow')
+                st.session_state.end_time = datetime.now(moscow_tz).strftime("%H:%M:%S %d.%m.%Y")
                 st.session_state.step = "finished"
             
             st.rerun()
@@ -213,7 +216,7 @@ elif st.session_state.step == "finished":
     with c1:
         st.markdown(f"**ФИО:** {user['name']}")
         st.markdown(f"**Группа:** {user['group']}")
-        st.markdown(f"**Время сдачи:** {finish_time}")
+        st.markdown(f"**Время сдачи (МСК):** {finish_time}")
     with c2:
         st.metric("Баллы", f"{score}/{total}", f"{percent}%")
     st.markdown("---")
