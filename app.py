@@ -157,7 +157,6 @@ def save_result_to_csv(student_info, score, total):
     
     df_new = pd.DataFrame(new_data)
     
-    # ИСПОЛЬЗУЕМ sep=';' ЧТОБЫ EXCEL РАСПРЕДЕЛЯЛ ПО СТОЛБЦАМ
     if os.path.exists(RESULTS_FILE):
         df_new.to_csv(RESULTS_FILE, mode='a', header=False, index=False, sep=';', encoding='utf-8-sig')
     else:
@@ -215,42 +214,16 @@ with st.sidebar:
         st.rerun()
         
     st.markdown("---")
-    
-    # --- ПАНЕЛЬ ПРЕПОДАВАТЕЛЯ ---
-    with st.expander("👨‍🏫 Панель преподавателя"):
-        password = st.text_input("Введите пароль", type="password")
-        if password == ADMIN_PASSWORD:
-            st.success("Доступ разрешен")
+    # Оставляем панель и в сайдбаре (на всякий случай)
+    with st.expander("👨‍🏫 Панель преподавателя (Sidebar)"):
+        side_pwd = st.text_input("Пароль", type="password", key="side_pwd")
+        if side_pwd == ADMIN_PASSWORD:
             if os.path.exists(RESULTS_FILE):
                 try:
-                    # Читаем с разделителем ;
-                    df = pd.read_csv(RESULTS_FILE, sep=';', encoding='utf-8-sig')
-                    st.dataframe(df)
-                    
-                    # Скачиваем тоже с разделителем ;
-                    csv_data = df.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
-                    
-                    st.download_button(
-                        label="📥 Скачать таблицу (.csv)",
-                        data=csv_data,
-                        file_name="results_group.csv",
-                        mime="text/csv",
-                    )
-                except Exception as e:
-                    st.error(f"Ошибка чтения файла (возможно старый формат): {e}")
-                    st.warning("Рекомендуется очистить таблицу.")
-                
-                if st.button("🗑 Очистить таблицу"):
-                    try:
-                        os.remove(RESULTS_FILE)
-                        st.success("Таблица очищена!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Ошибка при удалении: {e}")
-            else:
-                st.info("Пока нет сохраненных результатов.")
-        elif password:
-            st.error("Неверный пароль")
+                    df_side = pd.read_csv(RESULTS_FILE, sep=';', encoding='utf-8-sig')
+                    st.dataframe(df_side, height=200)
+                except:
+                    st.error("Ошибка чтения")
 
     # Таймер
     show_live_timer()
@@ -357,8 +330,9 @@ elif st.session_state.step == "finished":
     
     st.success(f"Вы набрали {score} из {total} баллов ({percent}%)")
     
+    # --- ЛОГИКА СОХРАНЕНИЯ И ОТПРАВКИ ---
     if not st.session_state.email_sent:
-        # 1. Сохраняем в CSV с разделителем ;
+        # 1. Сохраняем в CSV (обновляем файл)
         save_result_to_csv(st.session_state.user_info, score, total)
         
         # 2. Отправляем на почту
@@ -388,7 +362,50 @@ elif st.session_state.step == "finished":
             else:
                 st.error(f"AI: {item['ai_feedback']}")
             st.markdown("---")
+            
+    st.markdown("---")
+    
+    # ==========================================
+    # 📊 ПАНЕЛЬ АДМИНИСТРАТОРА (НА ЭТОЙ ЖЕ СТРАНИЦЕ)
+    # ==========================================
+    st.subheader("👨‍🏫 Сводная таблица (для преподавателя)")
+    with st.expander("Открыть таблицу (требуется пароль)"):
+        main_pwd = st.text_input("Введите пароль администратора", type="password", key="main_pwd")
+        
+        if main_pwd == ADMIN_PASSWORD:
+            st.success("Доступ разрешен")
+            
+            if os.path.exists(RESULTS_FILE):
+                try:
+                    # Читаем СВЕЖИЙ файл
+                    df_main = pd.read_csv(RESULTS_FILE, sep=';', encoding='utf-8-sig')
+                    
+                    # Показываем последние результаты сверху (инверсия)
+                    st.dataframe(df_main.iloc[::-1], use_container_width=True)
+                    
+                    # Кнопка скачивания
+                    csv_data = df_main.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+                    st.download_button(
+                        label="📥 Скачать Excel/CSV",
+                        data=csv_data,
+                        file_name="results_group.csv",
+                        mime="text/csv",
+                    )
+                    
+                    if st.button("🗑 Очистить всю таблицу", key="clean_main"):
+                        os.remove(RESULTS_FILE)
+                        st.warning("Таблица удалена. Перезагрузите страницу.")
+                        time.sleep(1)
+                        st.rerun()
+                        
+                except Exception as e:
+                    st.error(f"Ошибка чтения файла: {e}")
+            else:
+                st.info("Файл результатов пока пуст.")
+        elif main_pwd:
+            st.error("Неверный пароль")
 
+    st.markdown("---")
     if st.button("Начать заново (Новый студент)"):
         st.session_state.clear()
         st.rerun()
