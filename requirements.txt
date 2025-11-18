@@ -1,3 +1,4 @@
 streamlit
 openai
-python-docx # Нужно для записи .xlsx
+python-docx
+pytz
