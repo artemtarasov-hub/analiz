@@ -157,11 +157,10 @@ def save_result_to_csv(student_info, score, total):
     
     df_new = pd.DataFrame(new_data)
     
+    # Используем точку с запятой для Excel
     if os.path.exists(RESULTS_FILE):
-        # Если файл есть, дописываем
         df_new.to_csv(RESULTS_FILE, mode='a', header=False, index=False, sep=';', encoding='utf-8-sig')
     else:
-        # Если нет, создаем новый
         df_new.to_csv(RESULTS_FILE, mode='w', header=True, index=False, sep=';', encoding='utf-8-sig')
 
 # --- ТАЙМЕР ---
@@ -217,23 +216,46 @@ with st.sidebar:
         
     st.markdown("---")
     
-    # --- ИСПРАВЛЕННАЯ ПАНЕЛЬ В САЙДБАРЕ ---
-    with st.expander("👨‍🏫 Панель преподавателя (Sidebar)"):
+    # --- ПАНЕЛЬ ПРЕПОДАВАТЕЛЯ (ВЕРНУЛ В SIDEBAR) ---
+    with st.expander("👨‍🏫 Панель преподавателя"):
         side_pwd = st.text_input("Пароль", type="password", key="side_pwd")
+        
         if side_pwd == ADMIN_PASSWORD:
+            st.success("Доступ разрешен")
             if os.path.exists(RESULTS_FILE):
                 try:
-                    # Пытаемся прочитать
+                    # Читаем файл
                     df_side = pd.read_csv(RESULTS_FILE, sep=';', encoding='utf-8-sig')
-                    st.dataframe(df_side, height=200)
+                    
+                    # Показываем таблицу (перевернув, чтобы новые были сверху)
+                    st.dataframe(df_side.iloc[::-1], height=250)
+                    
+                    # Кнопка СКАЧИВАНИЯ
+                    csv_data = df_side.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+                    st.download_button(
+                        label="📥 Скачать таблицу",
+                        data=csv_data,
+                        file_name="results_group.csv",
+                        mime="text/csv",
+                    )
+                    
+                    # Кнопка УДАЛЕНИЯ
+                    if st.button("🗑 Очистить таблицу", key="del_sidebar"):
+                        os.remove(RESULTS_FILE)
+                        st.warning("Таблица удалена!")
+                        time.sleep(1)
+                        st.rerun()
+                        
                 except Exception as e:
-                    # Если ошибка, показываем её и КНОПКУ СБРОСА
-                    st.error("Ошибка чтения (старый формат файла?)")
-                    if st.button("🗑 Удалить/Сбросить таблицу", key="fix_sidebar_btn"):
+                    # Если файл поврежден или старый формат
+                    st.error(f"Ошибка: {e}")
+                    if st.button("🗑 Сбросить (Исправить ошибку)", key="fix_sidebar"):
                         os.remove(RESULTS_FILE)
                         st.rerun()
             else:
                 st.info("Таблица пуста")
+        elif side_pwd:
+            st.error("Неверный пароль")
 
     # Таймер
     show_live_timer()
@@ -342,10 +364,10 @@ elif st.session_state.step == "finished":
     
     # --- ЛОГИКА СОХРАНЕНИЯ И ОТПРАВКИ ---
     if not st.session_state.email_sent:
-        # 1. Сохраняем в CSV с разделителем ;
+        # 1. Сохраняем в файл (Автоматическое обновление)
         save_result_to_csv(st.session_state.user_info, score, total)
         
-        # 2. Отправляем на почту
+        # 2. Отправляем письмо
         with st.spinner("📧 Отправка результатов преподавателю..."):
             success, msg = send_email_results(
                 EMAIL_SENDER, 
@@ -372,54 +394,7 @@ elif st.session_state.step == "finished":
             else:
                 st.error(f"AI: {item['ai_feedback']}")
             st.markdown("---")
-            
-    st.markdown("---")
-    
-    # ==========================================
-    # 📊 ПАНЕЛЬ АДМИНИСТРАТОРА (MAIN PAGE)
-    # ==========================================
-    st.subheader("👨‍🏫 Сводная таблица (для преподавателя)")
-    with st.expander("Открыть таблицу (требуется пароль)"):
-        main_pwd = st.text_input("Введите пароль администратора", type="password", key="main_pwd")
-        
-        if main_pwd == ADMIN_PASSWORD:
-            st.success("Доступ разрешен")
-            
-            if os.path.exists(RESULTS_FILE):
-                try:
-                    # Читаем СВЕЖИЙ файл
-                    df_main = pd.read_csv(RESULTS_FILE, sep=';', encoding='utf-8-sig')
-                    
-                    # Показываем последние результаты сверху
-                    st.dataframe(df_main.iloc[::-1], use_container_width=True)
-                    
-                    # Кнопка скачивания
-                    csv_data = df_main.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
-                    st.download_button(
-                        label="📥 Скачать Excel/CSV",
-                        data=csv_data,
-                        file_name="results_group.csv",
-                        mime="text/csv",
-                    )
-                    
-                    if st.button("🗑 Очистить всю таблицу", key="clean_main"):
-                        os.remove(RESULTS_FILE)
-                        st.warning("Таблица удалена. Перезагрузите страницу.")
-                        time.sleep(1)
-                        st.rerun()
-                        
-                except Exception as e:
-                    st.error(f"Ошибка чтения файла: {e}")
-                    # КНОПКА СБРОСА ДЛЯ ОСНОВНОЙ ПАНЕЛИ
-                    if st.button("🗑 Сбросить таблицу (Fix Error)", key="fix_main_btn"):
-                        os.remove(RESULTS_FILE)
-                        st.rerun()
-            else:
-                st.info("Файл результатов пока пуст.")
-        elif main_pwd:
-            st.error("Неверный пароль")
 
-    st.markdown("---")
     if st.button("Начать заново (Новый студент)"):
         st.session_state.clear()
         st.rerun()
