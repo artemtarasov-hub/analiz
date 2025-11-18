@@ -9,6 +9,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import time
+import pandas as pd  # <--- НОВАЯ БИБЛИОТЕКА
 
 # --- КОНФИГУРАЦИЯ СТРАНИЦЫ ---
 st.set_page_config(page_title="AI Экзаменатор", page_icon="🎓", layout="centered")
@@ -30,6 +31,10 @@ MODEL_NAME = "gpt-4o-mini"
 EMAIL_SENDER = "tmfc6023@gmail.com"
 EMAIL_PASSWORD = "uxsh ftph yvij fapk" 
 EMAIL_RECEIVER = "torpedomoscow.ru@gmail.com"
+
+# 3. Администрирование
+ADMIN_PASSWORD = "admin"  # Пароль для просмотра таблицы результатов
+RESULTS_FILE = "exam_results.csv" # Имя файла с результатами
 
 # Часовой пояс
 TZ_MOSCOW = pytz.timezone('Europe/Moscow')
@@ -100,12 +105,13 @@ def check_answer_with_ai(client, question, correct_answer, student_answer):
 
 def send_email_results(sender, password, receiver, student_info, score, total, history):
     subject = f"Результат теста: {student_info['name']} ({student_info['group']})"
+    time_str = datetime.now(TZ_MOSCOW).strftime('%H:%M:%S %d.%m.%Y')
     
     body = f"""
     Студент: {student_info['name']}
     Группа: {student_info['group']}
     Результат: {score} из {total} ({(score/total)*100:.1f}%)
-    Время завершения (МСК): {datetime.now(TZ_MOSCOW).strftime('%H:%M:%S %d.%m.%Y')}
+    Время завершения (МСК): {time_str}
     
     ---------------------------------------------------
     ДЕТАЛИЗАЦИЯ ОТВЕТОВ:
@@ -135,9 +141,29 @@ def send_email_results(sender, password, receiver, student_info, score, total, h
     except Exception as e:
         return False, str(e)
 
-# --- ИСПРАВЛЕННЫЙ ТАЙМЕР ---
-# Мы используем st.metric вместо st.sidebar.metric,
-# потому что функция и так вызывается ВНУТРИ сайдбара (см. вызов ниже)
+def save_result_to_csv(student_info, score, total):
+    """Сохраняет результат в локальный CSV файл"""
+    time_str = datetime.now(TZ_MOSCOW).strftime('%Y-%m-%d %H:%M:%S')
+    percent = round((score / total) * 100, 1) if total > 0 else 0
+    
+    new_data = {
+        "Время": [time_str],
+        "ФИО": [student_info['name']],
+        "Группа": [student_info['group']],
+        "Баллы": [score],
+        "Всего вопросов": [total],
+        "Процент": [percent]
+    }
+    
+    df_new = pd.DataFrame(new_data)
+    
+    # Если файл есть, дописываем (без заголовков), если нет - создаем
+    if os.path.exists(RESULTS_FILE):
+        df_new.to_csv(RESULTS_FILE, mode='a', header=False, index=False, encoding='utf-8-sig')
+    else:
+        df_new.to_csv(RESULTS_FILE, mode='w', header=True, index=False, encoding='utf-8-sig')
+
+# --- ТАЙМЕР ---
 @st.fragment(run_every=1)
 def show_live_timer():
     if st.session_state.step == "testing" and st.session_state.start_time:
@@ -148,7 +174,6 @@ def show_live_timer():
         
         if remaining.total_seconds() > 0:
             mins, secs = divmod(int(remaining.total_seconds()), 60)
-            # Здесь исправлено: просто st.metric
             st.metric("⏳ Таймер (Live)", f"{mins:02}:{secs:02}")
         else:
             st.error("⌛ Время вышло!")
@@ -188,9 +213,36 @@ with st.sidebar:
     if st.button("🔄 Сброс / Новый тест"):
         st.session_state.clear()
         st.rerun()
+        
+    st.markdown("---")
+    
+    # --- ПАНЕЛЬ ПРЕПОДАВАТЕЛЯ ---
+    with st.expander("👨‍🏫 Панель преподавателя"):
+        password = st.text_input("Введите пароль", type="password")
+        if password == ADMIN_PASSWORD:
+            st.success("Доступ разрешен")
+            if os.path.exists(RESULTS_FILE):
+                df = pd.read_csv(RESULTS_FILE)
+                st.dataframe(df)
+                
+                # Кнопка скачивания
+                csv_data = df.to_csv(index=False).encode('utf-8-sig')
+                st.download_button(
+                    label="📥 Скачать таблицу (.csv)",
+                    data=csv_data,
+                    file_name="results_group.csv",
+                    mime="text/csv",
+                )
+                
+                if st.button("🗑 Очистить таблицу"):
+                    os.remove(RESULTS_FILE)
+                    st.rerun()
+            else:
+                st.info("Пока нет сохраненных результатов.")
+        elif password:
+            st.error("Неверный пароль")
 
-    # Вызываем таймер здесь. Так как мы внутри "with st.sidebar:",
-    # фрагмент будет привязан к сайдбару.
+    # Таймер в сайдбаре
     show_live_timer()
 
 st.title("🎓 Система тестирования")
@@ -295,7 +347,12 @@ elif st.session_state.step == "finished":
     
     st.success(f"Вы набрали {score} из {total} баллов ({percent}%)")
     
+    # Если письмо еще не отправлено (первый рендер финала)
     if not st.session_state.email_sent:
+        # 1. Сохраняем в общую таблицу
+        save_result_to_csv(st.session_state.user_info, score, total)
+        
+        # 2. Отправляем письмо
         with st.spinner("📧 Отправка результатов преподавателю..."):
             success, msg = send_email_results(
                 EMAIL_SENDER, 
@@ -307,7 +364,7 @@ elif st.session_state.step == "finished":
                 st.session_state.history
             )
             if success:
-                st.toast("Результаты успешно отправлены преподавателю!", icon="📩")
+                st.toast("Результаты отправлены и сохранены!", icon="💾")
                 st.session_state.email_sent = True
             else:
                 st.error(f"Ошибка отправки почты: {msg}")
@@ -323,6 +380,6 @@ elif st.session_state.step == "finished":
                 st.error(f"AI: {item['ai_feedback']}")
             st.markdown("---")
 
-    if st.button("Начать заново"):
+    if st.button("Начать заново (Новый студент)"):
         st.session_state.clear()
         st.rerun()
