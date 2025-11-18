@@ -27,7 +27,6 @@ MODEL_NAME = "gpt-4o-mini"
 # 2. Администрирование
 ADMIN_PASSWORD = "admin"  
 RESULTS_FILE = "exam_results.csv" 
-DEFAULT_FILE_NAME = "questions.docx" # Имя файла по умолчанию
 
 # Часовой пояс
 TZ_MOSCOW = pytz.timezone('Europe/Moscow')
@@ -112,6 +111,7 @@ def save_result_to_csv(student_info, score, total):
     
     df_new = pd.DataFrame(new_data)
     
+    # ИСПОЛЬЗУЕМ sep=';' ЧТОБЫ EXCEL РАСПРЕДЕЛЯЛ ПО СТОЛБЦАМ
     if os.path.exists(RESULTS_FILE):
         df_new.to_csv(RESULTS_FILE, mode='a', header=False, index=False, sep=';', encoding='utf-8-sig')
     else:
@@ -128,7 +128,7 @@ def show_live_timer():
         
         if remaining.total_seconds() > 0:
             mins, secs = divmod(int(remaining.total_seconds()), 60)
-            st.metric("⏳ Таймер", f"{mins:02}:{secs:02}")
+            st.metric("⏳ Таймер (Live)", f"{mins:02}:{secs:02}")
         else:
             st.error("⌛ Время вышло!")
 
@@ -143,6 +143,7 @@ if "score" not in st.session_state:
     st.session_state.questions = []
     st.session_state.current_index = 0
     st.session_state.end_time = None
+# Заменили email_sent на result_saved
 if "result_saved" not in st.session_state:
     st.session_state.result_saved = False
 if "start_time" not in st.session_state:
@@ -150,68 +151,59 @@ if "start_time" not in st.session_state:
 if "time_limit_mins" not in st.session_state:
     st.session_state.time_limit_mins = 5
 
-# Определяем файл по умолчанию
-file_to_process = DEFAULT_FILE_NAME if os.path.exists(DEFAULT_FILE_NAME) else None
-# Дефолтные значения настроек
-questions_count = 5 
-time_input = 5      
-
 # --- САЙДБАР ---
 with st.sidebar:
-    st.title("🔧 Меню")
-    
-    show_live_timer()
+    st.header("⚙️ Меню")
 
+    default_file = "questions.docx"
+    if os.path.exists(default_file):
+        st.success(f"📄 Файл '{default_file}' подключен.")
+        file_to_process = default_file
+    else:
+        file_to_process = st.file_uploader("Загрузите файл вопросов (.docx)", type=["docx"])
+
+    questions_count = st.number_input("Количество вопросов", 1, 50, 5)
+    time_input = st.number_input("Время на тест (минуты)", 1, 180, 5)
+    
+    if st.button("🔄 Сброс / Новый тест"):
+        st.session_state.clear()
+        st.rerun()
+        
     st.markdown("---")
     
-    # --- ПАНЕЛЬ ПРЕПОДАВАТЕЛЯ ---
-    with st.expander("👨‍🏫 Панель преподавателя", expanded=False):
-        side_pwd = st.text_input("Пароль администратора", type="password", key="side_pwd")
+    # --- ПАНЕЛЬ ПРЕПОДАВАТЕЛЯ (В САЙДБАРЕ) ---
+    with st.expander("👨‍🏫 Панель преподавателя"):
+        side_pwd = st.text_input("Пароль", type="password", key="side_pwd")
         
         if side_pwd == ADMIN_PASSWORD:
-            st.success("🔓 Режим редактирования")
-            
-            st.subheader("1. Настройки теста")
-            
-            # --- ИЗМЕНЕНИЕ: Убрана загрузка, только статус файла ---
-            if file_to_process:
-                st.success(f"✅ Файл подключен: {DEFAULT_FILE_NAME}")
-            else:
-                st.error(f"❌ Файл {DEFAULT_FILE_NAME} не найден на сервере!")
-
-            questions_count = st.number_input("Кол-во вопросов", 1, 50, 5)
-            time_input = st.number_input("Время (минуты)", 1, 180, 5)
-            
-            if st.button("🔄 Сброс / Новый тест", use_container_width=True):
-                st.session_state.clear()
-                st.rerun()
-
-            st.markdown("---")
-            st.subheader("2. Результаты")
-            
-            # --- ТАБЛИЦА ---
+            st.success("Доступ разрешен")
             if os.path.exists(RESULTS_FILE):
                 try:
+                    # Читаем файл
                     df_side = pd.read_csv(RESULTS_FILE, sep=';', encoding='utf-8-sig')
-                    st.dataframe(df_side.iloc[::-1], height=200)
                     
+                    # Показываем таблицу (новые сверху)
+                    st.dataframe(df_side.iloc[::-1], height=250)
+                    
+                    # Кнопка СКАЧИВАНИЯ
                     csv_data = df_side.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
                     st.download_button(
                         label="📥 Скачать таблицу",
                         data=csv_data,
                         file_name="results_group.csv",
                         mime="text/csv",
-                        use_container_width=True
                     )
                     
-                    if st.button("🗑 Очистить таблицу", key="del_sidebar", use_container_width=True):
+                    # Кнопка УДАЛЕНИЯ
+                    if st.button("🗑 Очистить таблицу"):
                         os.remove(RESULTS_FILE)
                         st.warning("Таблица удалена!")
                         time.sleep(1)
                         st.rerun()
+                        
                 except Exception as e:
                     st.error(f"Ошибка: {e}")
-                    if st.button("🗑 Сбросить (Fix Error)"):
+                    if st.button("🗑 Сбросить (Исправить ошибку)"):
                         os.remove(RESULTS_FILE)
                         st.rerun()
             else:
@@ -219,40 +211,38 @@ with st.sidebar:
         elif side_pwd:
             st.error("Неверный пароль")
 
+    # Таймер
+    show_live_timer()
+
 st.title("🎓 Система тестирования")
 
 # --- ЭТАП 1: ВХОД ---
 if st.session_state.step == "login":
     st.markdown("### 👋 Регистрация")
-    st.caption("Пожалуйста, представьтесь, чтобы начать тестирование.")
-    
-    # Проверка наличия файла для студента
-    if not file_to_process:
-        st.error(f"⛔ ОШИБКА: Файл с вопросами '{DEFAULT_FILE_NAME}' не найден. Обратитесь к преподавателю.")
-    
     with st.form("login_form"):
         name_input = st.text_input("ФИО Студента")
         group_input = st.text_input("Номер группы")
-        # Кнопка активна, но проверка внутри
         start_btn = st.form_submit_button("Начать тест 🚀", type="primary")
         
         if start_btn:
-            if not file_to_process:
-                st.error("Невозможно начать: нет файла с вопросами.")
-            elif not name_input or not group_input:
+            if not name_input or not group_input:
                 st.error("⚠️ Заполните ФИО и группу!")
+            elif not file_to_process:
+                st.error("⚠️ Файл с вопросами не загружен.")
             else:
                 full_db = parse_docx_questions(file_to_process)
                 if full_db:
                     count = min(questions_count, len(full_db))
                     st.session_state.questions = random.sample(full_db, count)
                     st.session_state.user_info = {"name": name_input, "group": group_input}
+                    
                     st.session_state.time_limit_mins = time_input
                     st.session_state.start_time = datetime.now(TZ_MOSCOW)
+                    
                     st.session_state.step = "testing"
                     st.rerun()
                 else:
-                    st.error("❌ Ошибка чтения вопросов из файла (пустой или битый файл).")
+                    st.error("❌ Ошибка: не удалось найти вопросы в файле.")
 
 # --- ЭТАП 2: ТЕСТИРОВАНИЕ ---
 elif st.session_state.step == "testing":
@@ -326,9 +316,12 @@ elif st.session_state.step == "finished":
     
     st.success(f"Вы набрали {score} из {total} баллов ({percent}%)")
     
-    # --- СОХРАНЕНИЕ ---
+    # --- ЛОГИКА СОХРАНЕНИЯ (БЕЗ ПОЧТЫ) ---
     if not st.session_state.result_saved:
+        # 1. Сохраняем в файл
         save_result_to_csv(st.session_state.user_info, score, total)
+        
+        # 2. Ставим флаг, что сохранили
         st.toast("Результат сохранен в общую таблицу!", icon="💾")
         st.session_state.result_saved = True
 
