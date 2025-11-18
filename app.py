@@ -33,8 +33,8 @@ EMAIL_PASSWORD = "uxsh ftph yvij fapk"
 EMAIL_RECEIVER = "torpedomoscow.ru@gmail.com"
 
 # 3. Администрирование
-ADMIN_PASSWORD = "admin"  # Пароль для просмотра таблицы
-RESULTS_FILE = "exam_results.csv" # Имя файла с результатами
+ADMIN_PASSWORD = "admin"  
+RESULTS_FILE = "exam_results.csv" 
 
 # Часовой пояс
 TZ_MOSCOW = pytz.timezone('Europe/Moscow')
@@ -142,7 +142,7 @@ def send_email_results(sender, password, receiver, student_info, score, total, h
         return False, str(e)
 
 def save_result_to_csv(student_info, score, total):
-    """Сохраняет результат в локальный CSV файл"""
+    """Сохраняет результат в CSV с разделителем ; для Excel"""
     time_str = datetime.now(TZ_MOSCOW).strftime('%Y-%m-%d %H:%M:%S')
     percent = round((score / total) * 100, 1) if total > 0 else 0
     
@@ -157,11 +157,11 @@ def save_result_to_csv(student_info, score, total):
     
     df_new = pd.DataFrame(new_data)
     
-    # Используем utf-8-sig для корректной работы с Excel и русским языком
+    # ИСПОЛЬЗУЕМ sep=';' ЧТОБЫ EXCEL РАСПРЕДЕЛЯЛ ПО СТОЛБЦАМ
     if os.path.exists(RESULTS_FILE):
-        df_new.to_csv(RESULTS_FILE, mode='a', header=False, index=False, encoding='utf-8-sig')
+        df_new.to_csv(RESULTS_FILE, mode='a', header=False, index=False, sep=';', encoding='utf-8-sig')
     else:
-        df_new.to_csv(RESULTS_FILE, mode='w', header=True, index=False, encoding='utf-8-sig')
+        df_new.to_csv(RESULTS_FILE, mode='w', header=True, index=False, sep=';', encoding='utf-8-sig')
 
 # --- ТАЙМЕР ---
 @st.fragment(run_every=1)
@@ -216,34 +216,29 @@ with st.sidebar:
         
     st.markdown("---")
     
-    # --- ПАНЕЛЬ ПРЕПОДАВАТЕЛЯ (ИСПРАВЛЕНО ЧТЕНИЕ) ---
+    # --- ПАНЕЛЬ ПРЕПОДАВАТЕЛЯ ---
     with st.expander("👨‍🏫 Панель преподавателя"):
         password = st.text_input("Введите пароль", type="password")
         if password == ADMIN_PASSWORD:
             st.success("Доступ разрешен")
             if os.path.exists(RESULTS_FILE):
-                # Попытка прочитать файл с разными кодировками, чтобы избежать ошибки
                 try:
-                    df = pd.read_csv(RESULTS_FILE, encoding='utf-8-sig')
-                except UnicodeDecodeError:
-                    # Если старый файл был в другой кодировке
-                    try:
-                        df = pd.read_csv(RESULTS_FILE, encoding='cp1251')
-                    except:
-                        st.error("Файл результатов поврежден. Рекомендуется очистить таблицу.")
-                        df = pd.DataFrame()
-
-                if not df.empty:
+                    # Читаем с разделителем ;
+                    df = pd.read_csv(RESULTS_FILE, sep=';', encoding='utf-8-sig')
                     st.dataframe(df)
                     
-                    # Кнопка скачивания
-                    csv_data = df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                    # Скачиваем тоже с разделителем ;
+                    csv_data = df.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+                    
                     st.download_button(
                         label="📥 Скачать таблицу (.csv)",
                         data=csv_data,
                         file_name="results_group.csv",
                         mime="text/csv",
                     )
+                except Exception as e:
+                    st.error(f"Ошибка чтения файла (возможно старый формат): {e}")
+                    st.warning("Рекомендуется очистить таблицу.")
                 
                 if st.button("🗑 Очистить таблицу"):
                     try:
@@ -363,7 +358,7 @@ elif st.session_state.step == "finished":
     st.success(f"Вы набрали {score} из {total} баллов ({percent}%)")
     
     if not st.session_state.email_sent:
-        # 1. Сохраняем в CSV
+        # 1. Сохраняем в CSV с разделителем ;
         save_result_to_csv(st.session_state.user_info, score, total)
         
         # 2. Отправляем на почту
