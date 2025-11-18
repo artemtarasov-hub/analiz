@@ -8,6 +8,7 @@ import pytz
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import time
 
 # --- КОНФИГУРАЦИЯ СТРАНИЦЫ ---
 st.set_page_config(page_title="AI Экзаменатор", page_icon="🎓", layout="centered")
@@ -134,6 +135,26 @@ def send_email_results(sender, password, receiver, student_info, score, total, h
     except Exception as e:
         return False, str(e)
 
+# --- СПЕЦИАЛЬНАЯ ФУНКЦИЯ ДЛЯ ЖИВОГО ТАЙМЕРА ---
+# @st.fragment позволяет обновлять эту часть кода отдельно от всей страницы
+@st.fragment(run_every=1)
+def show_live_timer():
+    if st.session_state.step == "testing" and st.session_state.start_time:
+        now = datetime.now(TZ_MOSCOW)
+        elapsed = now - st.session_state.start_time
+        limit = timedelta(minutes=st.session_state.time_limit_mins)
+        remaining = limit - elapsed
+        
+        if remaining.total_seconds() > 0:
+            mins, secs = divmod(int(remaining.total_seconds()), 60)
+            st.sidebar.metric("⏳ Таймер (Live)", f"{mins:02}:{secs:02}")
+        else:
+            st.sidebar.error("⌛ Время вышло!")
+            # Если время вышло, форсируем завершение (но аккуратно, чтобы не зациклить)
+            # Здесь мы просто показываем 00:00, а логика остановки сработает при нажатии кнопки
+            # Или можно сделать st.rerun(), но это может прервать ввод.
+            # Лучше оставить визуальное уведомление, а при попытке ответа блокировать.
+
 # --- ИНИЦИАЛИЗАЦИЯ СОСТОЯНИЯ ---
 if "step" not in st.session_state:
     st.session_state.step = "login" 
@@ -150,7 +171,7 @@ if "email_sent" not in st.session_state:
 if "start_time" not in st.session_state:
     st.session_state.start_time = None
 if "time_limit_mins" not in st.session_state:
-    st.session_state.time_limit_mins = 5 # <--- ИЗМЕНЕНО: по умолчанию 5 минут
+    st.session_state.time_limit_mins = 5
 
 # --- САЙДБАР ---
 with st.sidebar:
@@ -164,27 +185,14 @@ with st.sidebar:
         file_to_process = st.file_uploader("Загрузите файл вопросов (.docx)", type=["docx"])
 
     questions_count = st.number_input("Количество вопросов", 1, 50, 5)
-    
-    # --- ВЫБОР ВРЕМЕНИ (по умолчанию 5) ---
     time_input = st.number_input("Время на тест (минуты)", 1, 180, 5)
     
     if st.button("🔄 Сброс / Новый тест"):
         st.session_state.clear()
         st.rerun()
 
-# --- ЛОГИКА ТАЙМЕРА (ЕСЛИ ТЕСТ ИДЕТ) ---
-if st.session_state.step == "testing":
-    now = datetime.now(TZ_MOSCOW)
-    elapsed = now - st.session_state.start_time
-    limit = timedelta(minutes=st.session_state.time_limit_mins)
-    remaining = limit - elapsed
-    
-    # Показываем таймер в сайдбаре
-    if remaining.total_seconds() > 0:
-        mins, secs = divmod(int(remaining.total_seconds()), 60)
-        st.sidebar.metric("⏳ Осталось времени", f"{mins:02}:{secs:02}")
-    else:
-        st.sidebar.error("⌛ Время вышло!")
+    # ВЫЗОВ ЖИВОГО ТАЙМЕРА В САЙДБАРЕ
+    show_live_timer()
 
 st.title("🎓 Система тестирования")
 
@@ -208,7 +216,6 @@ if st.session_state.step == "login":
                     st.session_state.questions = random.sample(full_db, count)
                     st.session_state.user_info = {"name": name_input, "group": group_input}
                     
-                    # Фиксируем время старта
                     st.session_state.time_limit_mins = time_input
                     st.session_state.start_time = datetime.now(TZ_MOSCOW)
                     
@@ -231,15 +238,17 @@ elif st.session_state.step == "testing":
         submit_btn = st.form_submit_button(label="Ответить ✍️")
 
     if submit_btn:
-        # ПРОВЕРКА ВРЕМЕНИ ПЕРЕД ОБРАБОТКОЙ
+        # ПРОВЕРКА ВРЕМЕНИ ПРИ ОТПРАВКЕ
         now = datetime.now(TZ_MOSCOW)
         elapsed_check = now - st.session_state.start_time
         limit_check = timedelta(minutes=st.session_state.time_limit_mins)
         
-        if elapsed_check > limit_check:
-            st.error("⛔ Время истекло! Тест завершен.")
+        # Добавляем небольшой буфер (например, 5 секунд) на задержки сети
+        if elapsed_check > limit_check + timedelta(seconds=5):
+            st.error("⛔ Время истекло! Ваш последний ответ не засчитан.")
             st.session_state.end_time = now.strftime("%H:%M:%S %d.%m.%Y")
             st.session_state.step = "finished"
+            time.sleep(2) # Даем прочитать сообщение
             st.rerun()
         
         elif not user_input.strip():
@@ -248,7 +257,6 @@ elif st.session_state.step == "testing":
         else:
             client = get_client()
             
-            # Чит-код
             is_cheat = "торпедо москва" in user_input.lower()
             final_answer_for_ai = q_data['answer'] if is_cheat else user_input
             display_answer = q_data['answer'] if is_cheat else user_input
@@ -281,7 +289,6 @@ elif st.session_state.step == "finished":
     
     st.title("🏁 Результат")
     
-    # Если тест прерван по времени
     now = datetime.now(TZ_MOSCOW)
     if st.session_state.start_time:
         elapsed_total = now - st.session_state.start_time
@@ -291,7 +298,6 @@ elif st.session_state.step == "finished":
     
     st.success(f"Вы набрали {score} из {total} баллов ({percent}%)")
     
-    # Отправка письма
     if not st.session_state.email_sent:
         with st.spinner("📧 Отправка результатов преподавателю..."):
             success, msg = send_email_results(
