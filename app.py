@@ -135,8 +135,9 @@ def send_email_results(sender, password, receiver, student_info, score, total, h
     except Exception as e:
         return False, str(e)
 
-# --- СПЕЦИАЛЬНАЯ ФУНКЦИЯ ДЛЯ ЖИВОГО ТАЙМЕРА ---
-# @st.fragment позволяет обновлять эту часть кода отдельно от всей страницы
+# --- ИСПРАВЛЕННЫЙ ТАЙМЕР ---
+# Мы используем st.metric вместо st.sidebar.metric,
+# потому что функция и так вызывается ВНУТРИ сайдбара (см. вызов ниже)
 @st.fragment(run_every=1)
 def show_live_timer():
     if st.session_state.step == "testing" and st.session_state.start_time:
@@ -147,13 +148,10 @@ def show_live_timer():
         
         if remaining.total_seconds() > 0:
             mins, secs = divmod(int(remaining.total_seconds()), 60)
-            st.sidebar.metric("⏳ Таймер (Live)", f"{mins:02}:{secs:02}")
+            # Здесь исправлено: просто st.metric
+            st.metric("⏳ Таймер (Live)", f"{mins:02}:{secs:02}")
         else:
-            st.sidebar.error("⌛ Время вышло!")
-            # Если время вышло, форсируем завершение (но аккуратно, чтобы не зациклить)
-            # Здесь мы просто показываем 00:00, а логика остановки сработает при нажатии кнопки
-            # Или можно сделать st.rerun(), но это может прервать ввод.
-            # Лучше оставить визуальное уведомление, а при попытке ответа блокировать.
+            st.error("⌛ Время вышло!")
 
 # --- ИНИЦИАЛИЗАЦИЯ СОСТОЯНИЯ ---
 if "step" not in st.session_state:
@@ -191,7 +189,8 @@ with st.sidebar:
         st.session_state.clear()
         st.rerun()
 
-    # ВЫЗОВ ЖИВОГО ТАЙМЕРА В САЙДБАРЕ
+    # Вызываем таймер здесь. Так как мы внутри "with st.sidebar:",
+    # фрагмент будет привязан к сайдбару.
     show_live_timer()
 
 st.title("🎓 Система тестирования")
@@ -238,17 +237,15 @@ elif st.session_state.step == "testing":
         submit_btn = st.form_submit_button(label="Ответить ✍️")
 
     if submit_btn:
-        # ПРОВЕРКА ВРЕМЕНИ ПРИ ОТПРАВКЕ
         now = datetime.now(TZ_MOSCOW)
         elapsed_check = now - st.session_state.start_time
         limit_check = timedelta(minutes=st.session_state.time_limit_mins)
         
-        # Добавляем небольшой буфер (например, 5 секунд) на задержки сети
         if elapsed_check > limit_check + timedelta(seconds=5):
             st.error("⛔ Время истекло! Ваш последний ответ не засчитан.")
             st.session_state.end_time = now.strftime("%H:%M:%S %d.%m.%Y")
             st.session_state.step = "finished"
-            time.sleep(2) # Даем прочитать сообщение
+            time.sleep(2) 
             st.rerun()
         
         elif not user_input.strip():
