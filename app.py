@@ -27,6 +27,7 @@ MODEL_NAME = "gpt-4o-mini"
 # 2. Администрирование
 ADMIN_PASSWORD = "admin"  
 RESULTS_FILE = "exam_results.csv" 
+DEFAULT_FILE_NAME = "questions.docx" # Имя файла по умолчанию
 
 # Часовой пояс
 TZ_MOSCOW = pytz.timezone('Europe/Moscow')
@@ -116,7 +117,7 @@ def save_result_to_csv(student_info, score, total):
     else:
         df_new.to_csv(RESULTS_FILE, mode='w', header=True, index=False, sep=';', encoding='utf-8-sig')
 
-# --- ТАЙМЕР (Виден студенту) ---
+# --- ТАЙМЕР ---
 @st.fragment(run_every=1)
 def show_live_timer():
     if st.session_state.step == "testing" and st.session_state.start_time:
@@ -149,24 +150,21 @@ if "start_time" not in st.session_state:
 if "time_limit_mins" not in st.session_state:
     st.session_state.time_limit_mins = 5
 
-# Переменные для настроек (чтобы они были доступны, если админка закрыта, берем дефолт)
-# Но так как мы перенесли управление, файл должен быть загружен преподавателем ДО старта.
-# Мы будем искать дефолтный файл, если он не загружен через админку.
-default_file = "questions.docx"
-file_to_process = default_file if os.path.exists(default_file) else None
-questions_count = 5 # Значение по умолчанию
-time_input = 5      # Значение по умолчанию
+# Определяем файл по умолчанию
+file_to_process = DEFAULT_FILE_NAME if os.path.exists(DEFAULT_FILE_NAME) else None
+# Дефолтные значения настроек
+questions_count = 5 
+time_input = 5      
 
-# --- САЙДБАР (ТЕПЕРЬ ТОЛЬКО АДМИНКА) ---
+# --- САЙДБАР ---
 with st.sidebar:
     st.title("🔧 Меню")
     
-    # ТАЙМЕР ВСЕГДА ВИДЕН (если тест идет)
     show_live_timer()
 
     st.markdown("---")
     
-    # --- ЕДИНАЯ ПАНЕЛЬ ПРЕПОДАВАТЕЛЯ ---
+    # --- ПАНЕЛЬ ПРЕПОДАВАТЕЛЯ ---
     with st.expander("👨‍🏫 Панель преподавателя", expanded=False):
         side_pwd = st.text_input("Пароль администратора", type="password", key="side_pwd")
         
@@ -174,15 +172,12 @@ with st.sidebar:
             st.success("🔓 Режим редактирования")
             
             st.subheader("1. Настройки теста")
-            # --- ФУНКЦИОНАЛ НАСТРОЕК (ПЕРЕНЕСЕН СЮДА) ---
-            uploaded_file = st.file_uploader("Загрузить вопросы (.docx)", type=["docx"])
-            if uploaded_file:
-                file_to_process = uploaded_file
-            elif os.path.exists(default_file):
-                st.info(f"Используется файл по умолчанию: {default_file}")
-                file_to_process = default_file
+            
+            # --- ИЗМЕНЕНИЕ: Убрана загрузка, только статус файла ---
+            if file_to_process:
+                st.success(f"✅ Файл подключен: {DEFAULT_FILE_NAME}")
             else:
-                st.warning("Файл с вопросами не найден!")
+                st.error(f"❌ Файл {DEFAULT_FILE_NAME} не найден на сервере!")
 
             questions_count = st.number_input("Кол-во вопросов", 1, 50, 5)
             time_input = st.number_input("Время (минуты)", 1, 180, 5)
@@ -194,11 +189,11 @@ with st.sidebar:
             st.markdown("---")
             st.subheader("2. Результаты")
             
-            # --- ФУНКЦИОНАЛ ТАБЛИЦЫ ---
+            # --- ТАБЛИЦА ---
             if os.path.exists(RESULTS_FILE):
                 try:
                     df_side = pd.read_csv(RESULTS_FILE, sep=';', encoding='utf-8-sig')
-                    st.dataframe(df_side.iloc[::-1], height=200) # Новые сверху
+                    st.dataframe(df_side.iloc[::-1], height=200)
                     
                     csv_data = df_side.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
                     st.download_button(
@@ -230,31 +225,34 @@ st.title("🎓 Система тестирования")
 if st.session_state.step == "login":
     st.markdown("### 👋 Регистрация")
     st.caption("Пожалуйста, представьтесь, чтобы начать тестирование.")
+    
+    # Проверка наличия файла для студента
+    if not file_to_process:
+        st.error(f"⛔ ОШИБКА: Файл с вопросами '{DEFAULT_FILE_NAME}' не найден. Обратитесь к преподавателю.")
+    
     with st.form("login_form"):
         name_input = st.text_input("ФИО Студента")
         group_input = st.text_input("Номер группы")
+        # Кнопка активна, но проверка внутри
         start_btn = st.form_submit_button("Начать тест 🚀", type="primary")
         
         if start_btn:
-            if not name_input or not group_input:
+            if not file_to_process:
+                st.error("Невозможно начать: нет файла с вопросами.")
+            elif not name_input or not group_input:
                 st.error("⚠️ Заполните ФИО и группу!")
-            elif not file_to_process:
-                st.error("⚠️ Файл с вопросами не загружен (обратитесь к преподавателю).")
             else:
                 full_db = parse_docx_questions(file_to_process)
                 if full_db:
                     count = min(questions_count, len(full_db))
                     st.session_state.questions = random.sample(full_db, count)
                     st.session_state.user_info = {"name": name_input, "group": group_input}
-                    
-                    # Сохраняем настройки времени в сессию
                     st.session_state.time_limit_mins = time_input
                     st.session_state.start_time = datetime.now(TZ_MOSCOW)
-                    
                     st.session_state.step = "testing"
                     st.rerun()
                 else:
-                    st.error("❌ Ошибка: не удалось найти вопросы в файле.")
+                    st.error("❌ Ошибка чтения вопросов из файла (пустой или битый файл).")
 
 # --- ЭТАП 2: ТЕСТИРОВАНИЕ ---
 elif st.session_state.step == "testing":
@@ -328,12 +326,9 @@ elif st.session_state.step == "finished":
     
     st.success(f"Вы набрали {score} из {total} баллов ({percent}%)")
     
-    # --- ЛОГИКА СОХРАНЕНИЯ ---
+    # --- СОХРАНЕНИЕ ---
     if not st.session_state.result_saved:
-        # 1. Сохраняем в файл
         save_result_to_csv(st.session_state.user_info, score, total)
-        
-        # 2. Ставим флаг, что сохранили
         st.toast("Результат сохранен в общую таблицу!", icon="💾")
         st.session_state.result_saved = True
 
