@@ -157,7 +157,7 @@ def save_result_to_csv(student_info, score, total):
     
     df_new = pd.DataFrame(new_data)
     
-    # Используем точку с запятой для Excel
+    # ИСПОЛЬЗУЕМ sep=';' ЧТОБЫ EXCEL РАСПРЕДЕЛЯЛ ПО СТОЛБЦАМ
     if os.path.exists(RESULTS_FILE):
         df_new.to_csv(RESULTS_FILE, mode='a', header=False, index=False, sep=';', encoding='utf-8-sig')
     else:
@@ -216,45 +216,40 @@ with st.sidebar:
         
     st.markdown("---")
     
-    # --- ПАНЕЛЬ ПРЕПОДАВАТЕЛЯ (ВЕРНУЛ В SIDEBAR) ---
+    # --- ПАНЕЛЬ ПРЕПОДАВАТЕЛЯ ---
     with st.expander("👨‍🏫 Панель преподавателя"):
-        side_pwd = st.text_input("Пароль", type="password", key="side_pwd")
-        
-        if side_pwd == ADMIN_PASSWORD:
+        password = st.text_input("Введите пароль", type="password")
+        if password == ADMIN_PASSWORD:
             st.success("Доступ разрешен")
             if os.path.exists(RESULTS_FILE):
                 try:
-                    # Читаем файл
-                    df_side = pd.read_csv(RESULTS_FILE, sep=';', encoding='utf-8-sig')
+                    # Читаем с разделителем ;
+                    df = pd.read_csv(RESULTS_FILE, sep=';', encoding='utf-8-sig')
+                    st.dataframe(df)
                     
-                    # Показываем таблицу (перевернув, чтобы новые были сверху)
-                    st.dataframe(df_side.iloc[::-1], height=250)
+                    # Скачиваем тоже с разделителем ;
+                    csv_data = df.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
                     
-                    # Кнопка СКАЧИВАНИЯ
-                    csv_data = df_side.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
                     st.download_button(
-                        label="📥 Скачать таблицу",
+                        label="📥 Скачать таблицу (.csv)",
                         data=csv_data,
                         file_name="results_group.csv",
                         mime="text/csv",
                     )
-                    
-                    # Кнопка УДАЛЕНИЯ
-                    if st.button("🗑 Очистить таблицу", key="del_sidebar"):
-                        os.remove(RESULTS_FILE)
-                        st.warning("Таблица удалена!")
-                        time.sleep(1)
-                        st.rerun()
-                        
                 except Exception as e:
-                    # Если файл поврежден или старый формат
-                    st.error(f"Ошибка: {e}")
-                    if st.button("🗑 Сбросить (Исправить ошибку)", key="fix_sidebar"):
+                    st.error(f"Ошибка чтения файла (возможно старый формат): {e}")
+                    st.warning("Рекомендуется очистить таблицу.")
+                
+                if st.button("🗑 Очистить таблицу"):
+                    try:
                         os.remove(RESULTS_FILE)
+                        st.success("Таблица очищена!")
                         st.rerun()
+                    except Exception as e:
+                        st.error(f"Ошибка при удалении: {e}")
             else:
-                st.info("Таблица пуста")
-        elif side_pwd:
+                st.info("Пока нет сохраненных результатов.")
+        elif password:
             st.error("Неверный пароль")
 
     # Таймер
@@ -362,12 +357,11 @@ elif st.session_state.step == "finished":
     
     st.success(f"Вы набрали {score} из {total} баллов ({percent}%)")
     
-    # --- ЛОГИКА СОХРАНЕНИЯ И ОТПРАВКИ ---
     if not st.session_state.email_sent:
-        # 1. Сохраняем в файл (Автоматическое обновление)
+        # 1. Сохраняем в CSV с разделителем ;
         save_result_to_csv(st.session_state.user_info, score, total)
         
-        # 2. Отправляем письмо
+        # 2. Отправляем на почту
         with st.spinner("📧 Отправка результатов преподавателю..."):
             success, msg = send_email_results(
                 EMAIL_SENDER, 
