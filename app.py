@@ -3,7 +3,7 @@ import os
 from docx import Document
 from openai import OpenAI
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 import smtplib
 from email.mime.text import MIMEText
@@ -13,10 +13,10 @@ from email.mime.multipart import MIMEMultipart
 st.set_page_config(page_title="AI Экзаменатор", page_icon="🎓", layout="centered")
 
 # ==========================================
-# 🔐 НАСТРОЙКИ (ВШИТЫЕ В КОД)
+# 🔐 НАСТРОЙКИ
 # ==========================================
 
-# 1. Настройки OpenAI
+# 1. OpenAI
 if "OPENAI_API_KEY" in st.secrets:
     API_KEY = st.secrets["OPENAI_API_KEY"]
 else:
@@ -25,10 +25,13 @@ else:
 BASE_URL = "https://openai.api.proxyapi.ru/v1"
 MODEL_NAME = "gpt-4o-mini"
 
-# 2. Настройки Почты
+# 2. Почта
 EMAIL_SENDER = "tmfc6023@gmail.com"
 EMAIL_PASSWORD = "uxsh ftph yvij fapk" 
 EMAIL_RECEIVER = "torpedomoscow.ru@gmail.com"
+
+# Часовой пояс
+TZ_MOSCOW = pytz.timezone('Europe/Moscow')
 
 # ==========================================
 
@@ -101,7 +104,7 @@ def send_email_results(sender, password, receiver, student_info, score, total, h
     Студент: {student_info['name']}
     Группа: {student_info['group']}
     Результат: {score} из {total} ({(score/total)*100:.1f}%)
-    Время завершения (МСК): {datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M:%S %d.%m.%Y')}
+    Время завершения (МСК): {datetime.now(TZ_MOSCOW).strftime('%H:%M:%S %d.%m.%Y')}
     
     ---------------------------------------------------
     ДЕТАЛИЗАЦИЯ ОТВЕТОВ:
@@ -144,6 +147,10 @@ if "score" not in st.session_state:
     st.session_state.end_time = None
 if "email_sent" not in st.session_state:
     st.session_state.email_sent = False
+if "start_time" not in st.session_state:
+    st.session_state.start_time = None
+if "time_limit_mins" not in st.session_state:
+    st.session_state.time_limit_mins = 30
 
 # --- САЙДБАР ---
 with st.sidebar:
@@ -158,15 +165,30 @@ with st.sidebar:
 
     questions_count = st.number_input("Количество вопросов", 1, 50, 5)
     
+    # --- НОВОЕ: ВЫБОР ВРЕМЕНИ ---
+    time_input = st.number_input("Время на тест (минуты)", 1, 180, 30)
+    
     if st.button("🔄 Сброс / Новый тест"):
         st.session_state.clear()
         st.rerun()
 
+# --- ЛОГИКА ТАЙМЕРА (ЕСЛИ ТЕСТ ИДЕТ) ---
+if st.session_state.step == "testing":
+    now = datetime.now(TZ_MOSCOW)
+    elapsed = now - st.session_state.start_time
+    limit = timedelta(minutes=st.session_state.time_limit_mins)
+    remaining = limit - elapsed
+    
+    # Показываем таймер в сайдбаре
+    if remaining.total_seconds() > 0:
+        mins, secs = divmod(int(remaining.total_seconds()), 60)
+        st.sidebar.metric("⏳ Осталось времени", f"{mins:02}:{secs:02}")
+    else:
+        st.sidebar.error("⌛ Время вышло!")
+
 st.title("🎓 Система тестирования")
 
-# --- ЛОГИКА ПРИЛОЖЕНИЯ ---
-
-# 1. ВХОД
+# --- ЭТАП 1: ВХОД ---
 if st.session_state.step == "login":
     st.markdown("### 👋 Регистрация")
     with st.form("login_form"):
@@ -185,12 +207,17 @@ if st.session_state.step == "login":
                     count = min(questions_count, len(full_db))
                     st.session_state.questions = random.sample(full_db, count)
                     st.session_state.user_info = {"name": name_input, "group": group_input}
+                    
+                    # Фиксируем время старта
+                    st.session_state.time_limit_mins = time_input
+                    st.session_state.start_time = datetime.now(TZ_MOSCOW)
+                    
                     st.session_state.step = "testing"
                     st.rerun()
                 else:
                     st.error("❌ Ошибка: не удалось найти вопросы в файле.")
 
-# 2. ТЕСТИРОВАНИЕ
+# --- ЭТАП 2: ТЕСТИРОВАНИЕ ---
 elif st.session_state.step == "testing":
     idx = st.session_state.current_index
     total = len(st.session_state.questions)
@@ -204,8 +231,20 @@ elif st.session_state.step == "testing":
         submit_btn = st.form_submit_button(label="Ответить ✍️")
 
     if submit_btn:
-        if not user_input.strip():
+        # ПРОВЕРКА ВРЕМЕНИ ПЕРЕД ОБРАБОТКОЙ
+        now = datetime.now(TZ_MOSCOW)
+        elapsed_check = now - st.session_state.start_time
+        limit_check = timedelta(minutes=st.session_state.time_limit_mins)
+        
+        if elapsed_check > limit_check:
+            st.error("⛔ Время истекло! Тест завершен.")
+            st.session_state.end_time = now.strftime("%H:%M:%S %d.%m.%Y")
+            st.session_state.step = "finished"
+            st.rerun()
+        
+        elif not user_input.strip():
             st.warning("Введите ответ.")
+            
         else:
             client = get_client()
             
@@ -230,18 +269,27 @@ elif st.session_state.step == "testing":
             if st.session_state.current_index + 1 < total:
                 st.session_state.current_index += 1
             else:
-                moscow_tz = pytz.timezone('Europe/Moscow')
-                st.session_state.end_time = datetime.now(moscow_tz).strftime("%H:%M:%S %d.%m.%Y")
+                st.session_state.end_time = datetime.now(TZ_MOSCOW).strftime("%H:%M:%S %d.%m.%Y")
                 st.session_state.step = "finished"
             st.rerun()
 
-# 3. ФИНАЛ
+# --- ЭТАП 3: ФИНАЛ ---
 elif st.session_state.step == "finished":
     score = st.session_state.score
     total = len(st.session_state.questions)
-    percent = int((score / total) * 100)
+    # Защита от деления на ноль (если вопросов было 0)
+    percent = int((score / total) * 100) if total > 0 else 0
     
     st.title("🏁 Результат")
+    
+    # Если тест прерван по времени, сообщаем об этом
+    now = datetime.now(TZ_MOSCOW)
+    if st.session_state.start_time:
+        elapsed_total = now - st.session_state.start_time
+        limit_total = timedelta(minutes=st.session_state.time_limit_mins)
+        if elapsed_total > limit_total and total > len(st.session_state.history):
+            st.warning("⏳ Тест был остановлен по истечении времени.")
+    
     st.success(f"Вы набрали {score} из {total} баллов ({percent}%)")
     
     # Отправка письма
@@ -267,12 +315,10 @@ elif st.session_state.step == "finished":
             st.markdown(f"**Вопрос:** {item['question']}")
             st.markdown(f"**Ваш ответ:** {item['user_answer']}")
             
-            # ИСПРАВЛЕННЫЙ БЛОК ОТОБРАЖЕНИЯ
             if item['is_correct']:
                 st.success(f"AI: {item['ai_feedback']}")
             else:
                 st.error(f"AI: {item['ai_feedback']}")
-                
             st.markdown("---")
 
     if st.button("Начать заново"):
