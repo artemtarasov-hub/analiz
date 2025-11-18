@@ -5,9 +5,6 @@ from openai import OpenAI
 import random
 from datetime import datetime, timedelta
 import pytz
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 import time
 import pandas as pd
 
@@ -27,12 +24,7 @@ else:
 BASE_URL = "https://openai.api.proxyapi.ru/v1"
 MODEL_NAME = "gpt-4o-mini"
 
-# 2. Почта
-EMAIL_SENDER = "tmfc6023@gmail.com"
-EMAIL_PASSWORD = "uxsh ftph yvij fapk" 
-EMAIL_RECEIVER = "torpedomoscow.ru@gmail.com"
-
-# 3. Администрирование
+# 2. Администрирование
 ADMIN_PASSWORD = "admin"  
 RESULTS_FILE = "exam_results.csv" 
 
@@ -103,44 +95,6 @@ def check_answer_with_ai(client, question, correct_answer, student_answer):
     except Exception as e:
         return f"Ошибка API: {e}"
 
-def send_email_results(sender, password, receiver, student_info, score, total, history):
-    subject = f"Результат теста: {student_info['name']} ({student_info['group']})"
-    time_str = datetime.now(TZ_MOSCOW).strftime('%H:%M:%S %d.%m.%Y')
-    
-    body = f"""
-    Студент: {student_info['name']}
-    Группа: {student_info['group']}
-    Результат: {score} из {total} ({(score/total)*100:.1f}%)
-    Время завершения (МСК): {time_str}
-    
-    ---------------------------------------------------
-    ДЕТАЛИЗАЦИЯ ОТВЕТОВ:
-    ---------------------------------------------------
-    """
-    
-    for i, item in enumerate(history, 1):
-        status = "✅ ВЕРНО" if item['is_correct'] else "❌ ОШИБКА"
-        body += f"\nВопрос {i}: {item['question']}\n"
-        body += f"Ответ студента: {item['user_answer']}\n"
-        body += f"Статус: {status}\n"
-        body += f"Комментарий AI: {item['ai_feedback']}\n"
-        body += "-" * 30 + "\n"
-
-    msg = MIMEMultipart()
-    msg['From'] = sender
-    msg['To'] = receiver
-    msg['Subject'] = subject
-    msg.attach(MIMEText(body, 'plain'))
-
-    try:
-        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
-        server.login(sender, password)
-        server.send_message(msg)
-        server.quit()
-        return True, "Письмо успешно отправлено"
-    except Exception as e:
-        return False, str(e)
-
 def save_result_to_csv(student_info, score, total):
     """Сохраняет результат в CSV с разделителем ; для Excel"""
     time_str = datetime.now(TZ_MOSCOW).strftime('%Y-%m-%d %H:%M:%S')
@@ -189,8 +143,9 @@ if "score" not in st.session_state:
     st.session_state.questions = []
     st.session_state.current_index = 0
     st.session_state.end_time = None
-if "email_sent" not in st.session_state:
-    st.session_state.email_sent = False
+# Заменили email_sent на result_saved
+if "result_saved" not in st.session_state:
+    st.session_state.result_saved = False
 if "start_time" not in st.session_state:
     st.session_state.start_time = None
 if "time_limit_mins" not in st.session_state:
@@ -216,40 +171,44 @@ with st.sidebar:
         
     st.markdown("---")
     
-    # --- ПАНЕЛЬ ПРЕПОДАВАТЕЛЯ ---
+    # --- ПАНЕЛЬ ПРЕПОДАВАТЕЛЯ (В САЙДБАРЕ) ---
     with st.expander("👨‍🏫 Панель преподавателя"):
-        password = st.text_input("Введите пароль", type="password")
-        if password == ADMIN_PASSWORD:
+        side_pwd = st.text_input("Пароль", type="password", key="side_pwd")
+        
+        if side_pwd == ADMIN_PASSWORD:
             st.success("Доступ разрешен")
             if os.path.exists(RESULTS_FILE):
                 try:
-                    # Читаем с разделителем ;
-                    df = pd.read_csv(RESULTS_FILE, sep=';', encoding='utf-8-sig')
-                    st.dataframe(df)
+                    # Читаем файл
+                    df_side = pd.read_csv(RESULTS_FILE, sep=';', encoding='utf-8-sig')
                     
-                    # Скачиваем тоже с разделителем ;
-                    csv_data = df.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+                    # Показываем таблицу (новые сверху)
+                    st.dataframe(df_side.iloc[::-1], height=250)
                     
+                    # Кнопка СКАЧИВАНИЯ
+                    csv_data = df_side.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
                     st.download_button(
-                        label="📥 Скачать таблицу (.csv)",
+                        label="📥 Скачать таблицу",
                         data=csv_data,
                         file_name="results_group.csv",
                         mime="text/csv",
                     )
-                except Exception as e:
-                    st.error(f"Ошибка чтения файла (возможно старый формат): {e}")
-                    st.warning("Рекомендуется очистить таблицу.")
-                
-                if st.button("🗑 Очистить таблицу"):
-                    try:
+                    
+                    # Кнопка УДАЛЕНИЯ
+                    if st.button("🗑 Очистить таблицу"):
                         os.remove(RESULTS_FILE)
-                        st.success("Таблица очищена!")
+                        st.warning("Таблица удалена!")
+                        time.sleep(1)
                         st.rerun()
-                    except Exception as e:
-                        st.error(f"Ошибка при удалении: {e}")
+                        
+                except Exception as e:
+                    st.error(f"Ошибка: {e}")
+                    if st.button("🗑 Сбросить (Исправить ошибку)"):
+                        os.remove(RESULTS_FILE)
+                        st.rerun()
             else:
-                st.info("Пока нет сохраненных результатов.")
-        elif password:
+                st.info("Таблица пуста")
+        elif side_pwd:
             st.error("Неверный пароль")
 
     # Таймер
@@ -357,26 +316,14 @@ elif st.session_state.step == "finished":
     
     st.success(f"Вы набрали {score} из {total} баллов ({percent}%)")
     
-    if not st.session_state.email_sent:
-        # 1. Сохраняем в CSV с разделителем ;
+    # --- ЛОГИКА СОХРАНЕНИЯ (БЕЗ ПОЧТЫ) ---
+    if not st.session_state.result_saved:
+        # 1. Сохраняем в файл
         save_result_to_csv(st.session_state.user_info, score, total)
         
-        # 2. Отправляем на почту
-        with st.spinner("📧 Отправка результатов преподавателю..."):
-            success, msg = send_email_results(
-                EMAIL_SENDER, 
-                EMAIL_PASSWORD, 
-                EMAIL_RECEIVER,
-                st.session_state.user_info,
-                score,
-                total,
-                st.session_state.history
-            )
-            if success:
-                st.toast("Результаты отправлены и сохранены!", icon="💾")
-                st.session_state.email_sent = True
-            else:
-                st.error(f"Ошибка отправки почты: {msg}")
+        # 2. Ставим флаг, что сохранили
+        st.toast("Результат сохранен в общую таблицу!", icon="💾")
+        st.session_state.result_saved = True
 
     with st.expander("🔍 Разбор ошибок"):
         for item in st.session_state.history:
